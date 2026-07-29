@@ -1,0 +1,160 @@
+# Databricks Workflow definition for the document intelligence pipeline.
+# Referenced from databricks.yml (Asset Bundle) — deployed as a Job with a
+# linear DAG plus a nightly schedule and a file-arrival trigger.
+
+resources:
+  jobs:
+    document_intelligence_pipeline:
+      name: "Document Intelligence Pipeline"
+      tags:
+        project: doc_intelligence
+
+      trigger:
+        # Fires shortly after new files land in the raw_docs Volume, in
+        # addition to (or instead of) the cron schedule below.
+        file_arrival:
+          url: "/Volumes/${var.catalog}/${var.schema}/raw_docs"
+          min_time_between_triggers_seconds: 300
+          wait_after_last_change_seconds: 60
+
+      schedule:
+        quartz_cron_expression: "0 0 * * * ?" # hourly safety-net run
+        timezone_id: "UTC"
+        pause_status: UNPAUSED
+
+      job_clusters:
+        - job_cluster_key: pipeline_cluster
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "${var.node_type_id}"
+            autoscale:
+              min_workers: 1
+              max_workers: 4
+            data_security_mode: SINGLE_USER
+
+      tasks:
+        - task_key: setup_schema
+          sql_task:
+            warehouse_id: "${var.sql_warehouse_id}"
+            file:
+              path: "../setup/02_create_tables.sql"
+
+        - task_key: setup_extended_schema
+          depends_on:
+            - task_key: setup_schema
+          sql_task:
+            warehouse_id: "${var.sql_warehouse_id}"
+            file:
+              path: "../setup/03_create_extended_tables.sql"
+
+        - task_key: ingest
+          depends_on:
+            - task_key: setup_extended_schema
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: "../notebooks/01_ingest_documents.py"
+            base_parameters:
+              catalog: "${var.catalog}"
+              schema: "${var.schema}"
+
+        - task_key: parse
+          depends_on:
+            - task_key: ingest
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: "../notebooks/02_parse_documents.py"
+            base_parameters:
+              catalog: "${var.catalog}"
+              schema: "${var.schema}"
+
+        - task_key: classify
+          depends_on:
+            - task_key: parse
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: "../notebooks/03_classify_documents.py"
+            base_parameters:
+              catalog: "${var.catalog}"
+              schema: "${var.schema}"
+              llm_endpoint: "${var.llm_endpoint}"
+
+        - task_key: extract
+          depends_on:
+            - task_key: classify
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: "../notebooks/04_extract_structured_data.py"
+            base_parameters:
+              catalog: "${var.catalog}"
+              schema: "${var.schema}"
+              llm_endpoint: "${var.llm_endpoint}"
+
+        - task_key: index
+          depends_on:
+            - task_key: extract
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: "../notebooks/05_create_vector_search_index.py"
+            base_parameters:
+              catalog: "${var.catalog}"
+              schema: "${var.schema}"
+              ai_schema: "${var.ai_schema}"
+
+        - task_key: redact_pii
+          depends_on:
+            - task_key: parse
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: "../notebooks/08_redact_pii.py"
+            base_parameters:
+              catalog: "${var.catalog}"
+              schema: "${var.schema}"
+              llm_endpoint: "${var.llm_endpoint}"
+              slack_webhook_url: "${var.slack_webhook_url}"
+
+        - task_key: summarize
+          depends_on:
+            - task_key: parse
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: "../notebooks/09_summarize_documents.py"
+            base_parameters:
+              catalog: "${var.catalog}"
+              schema: "${var.schema}"
+              llm_endpoint: "${var.llm_endpoint}"
+
+        - task_key: detect_duplicates
+          depends_on:
+            - task_key: index
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: "../notebooks/10_duplicate_detection.py"
+            base_parameters:
+              catalog: "${var.catalog}"
+              schema: "${var.schema}"
+              ai_schema: "${var.ai_schema}"
+
+        - task_key: detect_anomalies
+          depends_on:
+            - task_key: extract
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: "../notebooks/11_anomaly_detection.py"
+            base_parameters:
+              catalog: "${var.catalog}"
+              schema: "${var.schema}"
+              slack_webhook_url: "${var.slack_webhook_url}"
+
+        - task_key: data_quality_checks
+          depends_on:
+            - task_key: extract
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: "../notebooks/12_data_quality_checks.py"
+            base_parameters:
+              catalog: "${var.catalog}"
+              schema: "${var.schema}"
+
+      email_notifications:
+        on_failure:
+          - "${var.alert_email}"

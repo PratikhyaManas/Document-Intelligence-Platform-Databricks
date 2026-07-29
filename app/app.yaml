@@ -1,0 +1,5 @@
+command: ["streamlit", "run", "app.py"]
+
+env:
+  - name: STREAMLIT_SERVER_HEADLESS
+    value: "true"

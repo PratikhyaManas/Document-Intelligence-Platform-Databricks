@@ -1,0 +1,60 @@
+# Databricks Asset Bundle — deploys the pipeline Job and the Streamlit App
+# together. See: https://docs.databricks.com/dev-tools/bundles/
+
+bundle:
+  name: document-intelligence-platform
+
+variables:
+  catalog:
+    description: "Unity Catalog catalog name"
+    default: "doc_intel"
+  schema:
+    description: "Schema for bronze/silver/gold tables and volumes"
+    default: "pipeline"
+  ai_schema:
+    description: "Schema for vector search indexes and registered models"
+    default: "ai"
+  llm_endpoint:
+    description: "Foundation Model Serving endpoint used for classify/extract/RAG"
+    default: "databricks-claude-sonnet-4"
+  node_type_id:
+    description: "Cluster node type for the pipeline job"
+    default: "i3.xlarge"
+  sql_warehouse_id:
+    description: "Serverless SQL warehouse id (required for ai_parse_document/ai_query and the setup_schema task)"
+    default: ""
+  alert_email:
+    description: "Email for job failure notifications"
+    default: ""
+  slack_webhook_url:
+    description: "Slack incoming webhook URL for PII/anomaly alerts (leave blank to disable)"
+    default: ""
+
+include:
+  - jobs/*.yml
+
+resources:
+  apps:
+    document_intelligence_app:
+      name: "document-intelligence-app"
+      description: "Upload, explore, RAG-chat, and monitor cost for the document intelligence platform"
+      source_code_path: "./app"
+      resources:
+        - name: "sql-warehouse"
+          sql_warehouse:
+            id: "${var.sql_warehouse_id}"
+            permission: "CAN_USE"
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: "https://<your-workspace>.cloud.databricks.com"
+
+  prod:
+    mode: production
+    workspace:
+      host: "https://<your-workspace>.cloud.databricks.com"
+    variables:
+      node_type_id: "i3.2xlarge"
