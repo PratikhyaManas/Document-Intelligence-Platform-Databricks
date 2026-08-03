@@ -6,12 +6,20 @@ addresses, DOB) that regex can't reliably catch.
 
 from pyspark.sql import DataFrame, functions as F
 
+from doc_intelligence.ai_utils import (
+    add_prompt_column,
+    add_truncated_text_column,
+    ai_query_json_expr,
+)
+
 REGEX_PATTERNS = {
     "EMAIL": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
     "PHONE": r"\b(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
     "SSN": r"\b\d{3}-\d{2}-\d{4}\b",
     "CREDIT_CARD": r"\b(?:\d[ -]*?){13,16}\b",
 }
+
+REGEX_PII_TYPES = tuple(REGEX_PATTERNS.keys())
 
 REDACT_PROMPT = (
     "Identify personally identifiable information (PII) in the text below: "
@@ -44,56 +52,16 @@ def redact_documents(
     """
     regex_pass = _apply_regex_redactions(df, text_col)
 
-    truncated = regex_pass.withColumn(
-        "_truncated_text", F.substring(F.col(text_col), 1, max_chars)
-    )
-    prompted = truncated.withColumn(
-        "_prompt", F.concat(F.lit(REDACT_PROMPT), F.col("_truncated_text"), F.lit("\n---"))
-    )
+    truncated = add_truncated_text_column(regex_pass, source_col=text_col, max_chars=max_chars)
+    prompted = add_prompt_column(truncated, prompt_prefix=REDACT_PROMPT)
     llm_pass = prompted.withColumn(
         "_pii_response",
-        F.expr(
-            f"ai_query('{llm_endpoint}', _prompt, responseFormat => "
-            "'{\"type\": \"json_object\"}')"
-        ),
+        ai_query_json_expr(llm_endpoint),
     )
 
-    # Redact each LLM-identified entity value out of the regex-redacted text.
-    with_entities = llm_pass.withColumn(
-        "_entity_values",
-        F.expr(
-            "transform(from_json(_pii_response, 'entities ARRAY<STRUCT<type:STRING,value:STRING>>').entities, "
-            "e -> e.value)"
-        ),
-    ).withColumn(
-        "_entity_types",
-        F.expr(
-            "transform(from_json(_pii_response, 'entities ARRAY<STRUCT<type:STRING,value:STRING>>').entities, "
-            "e -> e.type)"
-        ),
-    )
-
-    final_redacted = with_entities.withColumn(
-        "redacted_text",
-        F.expr(
-            "aggregate(_entity_values, _redacted_regex, "
-            "(acc, v) -> replace(acc, v, '[REDACTED:PII]'))"
-        ),
-    )
-
-    result = (
-        final_redacted.withColumn("pii_entities_json", F.col("_pii_response"))
-        .withColumn(
-            "pii_types_found",
-            F.array_union(F.coalesce(F.col("_entity_types"), F.array()), F.array()),
-        )
-        .withColumn(
-            "contains_pii",
-            (F.size(F.coalesce(F.col("_entity_types"), F.array())) > 0)
-            | F.col("_redacted_regex").contains("[REDACTED:"),
-        )
-        .withColumn("redaction_model", F.lit(llm_endpoint))
-        .withColumn("redacted_at", F.current_timestamp())
+    result = apply_redaction_response(llm_pass)
+    result = result.withColumn("redaction_model", F.lit(llm_endpoint)).withColumn(
+        "redacted_at", F.current_timestamp()
     )
 
     return result.select(
@@ -104,4 +72,60 @@ def redact_documents(
         "contains_pii",
         "redaction_model",
         "redacted_at",
+    )
+
+
+def apply_redaction_response(
+    df: DataFrame,
+    response_col: str = "_pii_response",
+    redacted_regex_col: str = "_redacted_regex",
+) -> DataFrame:
+    """Applies PII entity extraction and final redaction composition."""
+    with_entities = df.withColumn(
+        "_entity_values",
+        F.expr(
+            f"transform(from_json({response_col}, 'entities ARRAY<STRUCT<type:STRING,value:STRING>>').entities, "
+            "e -> e.value)"
+        ),
+    ).withColumn(
+        "_entity_types",
+        F.expr(
+            f"transform(from_json({response_col}, 'entities ARRAY<STRUCT<type:STRING,value:STRING>>').entities, "
+            "e -> e.type)"
+        ),
+    )
+
+    final_redacted = with_entities.withColumn(
+        "redacted_text",
+        F.expr(
+            f"aggregate(_entity_values, {redacted_regex_col}, "
+            "(acc, v) -> replace(acc, v, '[REDACTED:PII]'))"
+        ),
+    ).withColumn(
+        "_regex_types_found",
+        F.array_remove(
+            F.array(
+                *[
+                    F.when(F.col(redacted_regex_col).contains(f"[REDACTED:{pii_type}]"), F.lit(pii_type))
+                    for pii_type in REGEX_PII_TYPES
+                ]
+            ),
+            F.lit(None),
+        ),
+    )
+
+    return (
+        final_redacted.withColumn("pii_entities_json", F.col(response_col))
+        .withColumn(
+            "pii_types_found",
+            F.array_union(
+                F.coalesce(F.col("_entity_types"), F.array()),
+                F.coalesce(F.col("_regex_types_found"), F.array()),
+            ),
+        )
+        .withColumn(
+            "contains_pii",
+            (F.size(F.coalesce(F.col("_entity_types"), F.array())) > 0)
+            | F.col(redacted_regex_col).contains("[REDACTED:"),
+        )
     )

@@ -2,6 +2,12 @@
 
 from pyspark.sql import DataFrame, functions as F
 
+from doc_intelligence.ai_utils import (
+    add_prompt_column,
+    add_truncated_text_column,
+    ai_query_json_expr,
+)
+
 SUMMARY_PROMPT = (
     "Summarize the document below in 2-4 sentences for a busy executive, "
     "then list up to 5 key points. Respond with ONLY compact JSON: "
@@ -18,16 +24,11 @@ def summarize_documents(
     llm_endpoint: str,
     max_chars: int = 10000,
 ) -> DataFrame:
-    truncated = df.withColumn("_truncated_text", F.substring(F.col(text_col), 1, max_chars))
-    prompted = truncated.withColumn(
-        "_prompt", F.concat(F.lit(SUMMARY_PROMPT), F.col("_truncated_text"), F.lit("\n---"))
-    )
+    truncated = add_truncated_text_column(df, source_col=text_col, max_chars=max_chars)
+    prompted = add_prompt_column(truncated, prompt_prefix=SUMMARY_PROMPT)
     responded = prompted.withColumn(
         "_response",
-        F.expr(
-            f"ai_query('{llm_endpoint}', _prompt, responseFormat => "
-            "'{\"type\": \"json_object\"}')"
-        ),
+        ai_query_json_expr(llm_endpoint),
     )
 
     result = (

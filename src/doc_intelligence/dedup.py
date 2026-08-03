@@ -56,15 +56,16 @@ def find_near_duplicates_from_search(
     matching the gold_duplicate_documents schema (minus canonicalization
     beyond simple pairwise reporting).
     """
-    first_chunks = (
-        chunks_df.filter("chunk_index = 0")
-        .select("doc_id", "document_type", "chunk_text")
-        .limit(sample_per_type * 10)
+    first_chunks = chunks_df.filter("chunk_index = 0").select("doc_id", "document_type", "chunk_text")
+    sample_window = Window.partitionBy("document_type").orderBy("doc_id")
+    sampled = first_chunks.withColumn("_sample_rank", F.row_number().over(sample_window)).filter(
+        F.col("_sample_rank") <= sample_per_type
     )
 
+    index = vsc.get_index(endpoint_name=endpoint_name, index_name=index_fullname)
     rows = []
-    for row in first_chunks.collect():
-        index = vsc.get_index(endpoint_name=endpoint_name, index_name=index_fullname)
+    seen_pairs = set()
+    for row in sampled.collect():
         results = index.similarity_search(
             query_text=row["chunk_text"],
             columns=["doc_id", "document_type"],
@@ -72,10 +73,15 @@ def find_near_duplicates_from_search(
             filters={"document_type": row["document_type"]} if row["document_type"] else None,
         )
         for match in results.get("result", {}).get("data_array", []):
-            match_doc_id, _match_type, score = match[0], match[1], match[-1]
-            if match_doc_id != row["doc_id"] and score >= similarity_threshold:
+            match_doc_id, _match_type, score = str(match[0]), match[1], float(match[-1])
+            source_doc_id = str(row["doc_id"])
+            if match_doc_id != source_doc_id and score >= similarity_threshold:
+                pair = tuple(sorted([source_doc_id, match_doc_id]))
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
                 rows.append(
-                    (row["doc_id"], match_doc_id, float(score), "NEAR_DUPLICATE_EMBEDDING")
+                    (source_doc_id, match_doc_id, score, "NEAR_DUPLICATE_EMBEDDING")
                 )
 
     schema = "doc_id STRING, duplicate_of_doc_id STRING, similarity_score DOUBLE, match_type STRING"

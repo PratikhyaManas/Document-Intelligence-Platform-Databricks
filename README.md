@@ -144,9 +144,46 @@ requirements.txt    Local/dev dependencies
 | 10 | `10_duplicate_detection.py` | Exact-hash + embedding near-duplicate detection → `gold.duplicate_documents` |
 | 11 | `11_anomaly_detection.py` | Statistical + rule-based anomaly checks → `gold.document_anomalies`, review queue, Slack alert |
 | 12 | `12_data_quality_checks.py` | Field-level DQ checks → `data_quality_results`; enqueues low-confidence classifications for review |
+| 13 | `13_duplicate_detection_benchmark.py` | Synthetic benchmark comparing baseline vs optimized near-duplicate detection flow |
 
 `scripts/reprocess_documents.py` — CLI to clear downstream rows for
 specific `doc_id`s (or every failed parse) and re-trigger the job.
+
+### Reprocessing examples
+
+```bash
+# Inspect generated DELETE statements only
+python scripts/reprocess_documents.py \
+   --warehouse-id <warehouse-id> \
+   --doc-ids abc123,def456 \
+   --dry-run
+
+# Reprocess failed parses with larger DELETE batches
+python scripts/reprocess_documents.py \
+   --warehouse-id <warehouse-id> \
+   --all-failed-parses \
+   --batch-size 1000
+
+# Clear rows, then trigger a pipeline job run
+python scripts/reprocess_documents.py \
+   --warehouse-id <warehouse-id> \
+   --doc-ids abc123 \
+   --trigger-job 123456789
+```
+
+Notes:
+- `--batch-size` controls DELETE chunking to avoid very large `IN (...)` clauses.
+- For `gold_duplicate_documents`, rows are removed when either `doc_id` or
+   `duplicate_of_doc_id` matches the requested document ids.
+
+### Run benchmark on demand
+
+The benchmark notebook is wired as a separate manual job so hourly/file-arrival
+pipeline runs are not impacted.
+
+```bash
+databricks bundle run document_intelligence_benchmark -t dev
+```
 
 ## Extending
 

@@ -6,6 +6,12 @@ Add/edit entries in EXTRACTION_SCHEMAS to support new document types.
 
 from pyspark.sql import DataFrame, functions as F
 
+from doc_intelligence.ai_utils import (
+    add_prompt_column,
+    add_truncated_text_column,
+    ai_query_json_expr,
+)
+
 EXTRACTION_SCHEMAS = {
     "invoice": {
         "vendor_name": "string",
@@ -71,7 +77,7 @@ def extract_fields(
     (vendor_or_party, amount_total, currency, doc_date) by prompting
     the LLM with a schema tailored to each row's document_type.
     """
-    when_expr = None
+    instruction_by_type = []
     for doc_type, schema in EXTRACTION_SCHEMAS.items():
         fragment = _schema_to_prompt_fragment(schema)
         instruction = (
@@ -79,24 +85,23 @@ def extract_fields(
             f"JSON object matching this exact shape (use null when a field is "
             f"not present):\n{fragment}\n\nDocument text (may be truncated):\n---\n"
         )
-        branch = F.when(F.col(doc_type_col) == doc_type, F.lit(instruction))
-        when_expr = branch if when_expr is None else when_expr.when(
-            F.col(doc_type_col) == doc_type, F.lit(instruction)
-        )
+        instruction_by_type.append((doc_type, instruction))
+
+    if not instruction_by_type:
+        raise ValueError("EXTRACTION_SCHEMAS cannot be empty")
+
+    first_doc_type, first_instruction = instruction_by_type[0]
+    when_expr = F.when(F.col(doc_type_col) == first_doc_type, F.lit(first_instruction))
+    for doc_type, instruction in instruction_by_type[1:]:
+        when_expr = when_expr.when(F.col(doc_type_col) == doc_type, F.lit(instruction))
     when_expr = when_expr.otherwise(F.lit(_schema_to_prompt_fragment(EXTRACTION_SCHEMAS["other"])))
 
-    truncated = df.withColumn("_truncated_text", F.substring(F.col(text_col), 1, max_chars))
-    prompted = truncated.withColumn(
-        "_prompt",
-        F.concat(when_expr, F.col("_truncated_text"), F.lit("\n---")),
-    )
+    truncated = add_truncated_text_column(df, source_col=text_col, max_chars=max_chars)
+    prompted = add_prompt_column(truncated, prompt_prefix=when_expr)
 
     extracted = prompted.withColumn(
         "_response_json",
-        F.expr(
-            f"ai_query('{llm_endpoint}', _prompt, responseFormat => "
-            "'{\"type\": \"json_object\"}')"
-        ),
+        ai_query_json_expr(llm_endpoint),
     )
 
     result = (

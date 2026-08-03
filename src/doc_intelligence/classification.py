@@ -5,6 +5,12 @@ Snowflake's AI_CLASSIFY.
 
 from pyspark.sql import DataFrame, functions as F
 
+from doc_intelligence.ai_utils import (
+    add_prompt_column,
+    add_truncated_text_column,
+    ai_query_json_expr,
+)
+
 CLASSIFY_PROMPT_TEMPLATE = """You are a document classification engine.
 Classify the document below into exactly one of these categories:
 {categories}
@@ -31,43 +37,24 @@ def classify_documents(
     """
     categories_str = ", ".join(categories)
 
-    truncated = df.withColumn(
-        "_truncated_text", F.substring(F.col(text_col), 1, max_chars)
-    )
+    truncated = add_truncated_text_column(df, source_col=text_col, max_chars=max_chars)
 
-    prompt_expr = F.concat(
-        F.lit(
-            "You are a document classification engine.\n"
-            f"Classify the document below into exactly one of these categories: {categories_str}.\n"
-            'Respond with ONLY compact JSON: {"document_type": "<category>", "confidence": <0.0-1.0>}\n'
-            "Document text (may be truncated):\n---\n"
-        ),
-        F.col("_truncated_text"),
-        F.lit("\n---"),
+    prompt_prefix = (
+        "You are a document classification engine.\n"
+        f"Classify the document below into exactly one of these categories: {categories_str}.\n"
+        'Respond with ONLY compact JSON: {"document_type": "<category>", "confidence": <0.0-1.0>}\n'
+        "Document text (may be truncated):\n---\n"
     )
+    prompted = add_prompt_column(truncated, prompt_prefix=prompt_prefix)
 
     # ai_query() takes the endpoint name and a column expression for the
     # prompt; responseFormat enforces JSON-mode decoding on supported models.
-    classified = truncated.withColumn("_prompt", prompt_expr).withColumn(
+    classified = prompted.withColumn(
         "_response_json",
-        F.expr(
-            f"ai_query('{llm_endpoint}', _prompt, responseFormat => "
-            "'{\"type\": \"json_object\"}')"
-        ),
+        ai_query_json_expr(llm_endpoint),
     )
 
-    parsed = classified.withColumn(
-        "document_type",
-        F.coalesce(
-            F.get_json_object("_response_json", "$.document_type"), F.lit("other")
-        ),
-    ).withColumn(
-        "confidence",
-        F.coalesce(
-            F.get_json_object("_response_json", "$.confidence").cast("double"),
-            F.lit(0.0),
-        ),
-    )
+    parsed = apply_classification_response(classified, categories=categories, response_col="_response_json")
 
     return (
         parsed.withColumn("classifier_model", F.lit(llm_endpoint))
@@ -79,4 +66,24 @@ def classify_documents(
             "classifier_model",
             "classified_at",
         )
+    )
+
+
+def apply_classification_response(df: DataFrame, categories: tuple, response_col: str = "_response_json") -> DataFrame:
+    """Parses and normalizes classification JSON response columns."""
+    allowed_categories = [c.lower() for c in categories]
+    return df.withColumn(
+        "_document_type_raw",
+        F.lower(F.trim(F.get_json_object(response_col, "$.document_type"))),
+    ).withColumn(
+        "document_type",
+        F.when(F.col("_document_type_raw").isin(*allowed_categories), F.col("_document_type_raw")).otherwise(
+            F.lit("other")
+        ),
+    ).withColumn(
+        "confidence",
+        F.coalesce(
+            F.get_json_object(response_col, "$.confidence").cast("double"),
+            F.lit(0.0),
+        ),
     )

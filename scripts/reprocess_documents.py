@@ -14,6 +14,7 @@ or DATABRICKS_HOST / DATABRICKS_TOKEN env vars set.
 
 import argparse
 import sys
+from itertools import islice
 
 from databricks.sdk import WorkspaceClient
 
@@ -31,10 +32,29 @@ DOWNSTREAM_TABLES = [
 ]
 
 
-def build_delete_statement(table_fullname: str, doc_ids: list[str]) -> str:
-    id_list = ", ".join(f"'{d}'" for d in doc_ids)
-    doc_id_col = "doc_id" if table_fullname != "gold_duplicate_documents" else "doc_id"
-    return f"DELETE FROM {table_fullname} WHERE {doc_id_col} IN ({id_list})"
+def _sql_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _chunked(values: list[str], size: int):
+    iterator = iter(values)
+    while True:
+        chunk = list(islice(iterator, size))
+        if not chunk:
+            return
+        yield chunk
+
+
+def build_delete_statements(table_name: str, table_fullname: str, doc_ids: list[str], batch_size: int) -> list[str]:
+    statements = []
+    for chunk in _chunked(doc_ids, batch_size):
+        id_list = ", ".join(_sql_quote(d) for d in chunk)
+        if table_name == "gold_duplicate_documents":
+            where_clause = f"doc_id IN ({id_list}) OR duplicate_of_doc_id IN ({id_list})"
+        else:
+            where_clause = f"doc_id IN ({id_list})"
+        statements.append(f"DELETE FROM {table_fullname} WHERE {where_clause}")
+    return statements
 
 
 def main():
@@ -49,7 +69,12 @@ def main():
     )
     parser.add_argument("--trigger-job", help="Job id to run_now() after clearing downstream rows")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--batch-size", type=int, default=500, help="DELETE batch size per statement")
     args = parser.parse_args()
+
+    if args.batch_size <= 0:
+        print("--batch-size must be > 0", file=sys.stderr)
+        sys.exit(1)
 
     w = WorkspaceClient()
 
@@ -77,12 +102,13 @@ def main():
 
     for table in DOWNSTREAM_TABLES:
         table_fullname = f"{args.catalog}.{args.schema}.{table}"
-        stmt = build_delete_statement(table_fullname, doc_ids)
-        print(f"  {stmt}")
-        if not args.dry_run:
-            w.statement_execution.execute_statement(
-                warehouse_id=args.warehouse_id, statement=stmt, catalog=args.catalog, schema=args.schema
-            )
+        statements = build_delete_statements(table, table_fullname, doc_ids, args.batch_size)
+        for stmt in statements:
+            print(f"  {stmt}")
+            if not args.dry_run:
+                w.statement_execution.execute_statement(
+                    warehouse_id=args.warehouse_id, statement=stmt, catalog=args.catalog, schema=args.schema
+                )
 
     print("Downstream rows cleared. Bronze rows are left intact so the "
           "parse stage will pick these documents back up.")

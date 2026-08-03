@@ -18,7 +18,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install test dependencies
-        run: pip install pytest pyspark==3.5.1
+        run: pip install pytest pyspark==3.5.1 pyyaml
+
+      - name: Static bundle YAML sanity check (no auth)
+        run: python scripts/ci/validate_bundle_static.py
 
       - name: Run unit tests (pure-python helpers)
         run: pytest tests/ -q

@@ -158,3 +158,27 @@ resources:
       email_notifications:
         on_failure:
           - "${var.alert_email}"
+
+    document_intelligence_benchmark:
+      name: "Document Intelligence Benchmark"
+      tags:
+        project: doc_intelligence
+        purpose: benchmark
+
+      # No trigger/schedule by design: run this only on demand.
+      job_clusters:
+        - job_cluster_key: benchmark_cluster
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "${var.node_type_id}"
+            num_workers: 1
+            data_security_mode: SINGLE_USER
+
+      tasks:
+        - task_key: benchmark_duplicate_detection
+          job_cluster_key: benchmark_cluster
+          notebook_task:
+            notebook_path: "../notebooks/13_duplicate_detection_benchmark.py"
+            base_parameters:
+              catalog: "${var.catalog}"
+              schema: "${var.schema}"
