@@ -28,37 +28,103 @@ Anomalies & Duplicates · Cost Monitor**.
 
 ## Architecture
 
+### Executive view
+
+```mermaid
+flowchart LR
+   classDef source fill:#E8F4FD,stroke:#1D4ED8,stroke-width:1px,color:#0B1324;
+   classDef bronze fill:#FFF4E5,stroke:#C2410C,stroke-width:1px,color:#0B1324;
+   classDef silver fill:#F1F5F9,stroke:#334155,stroke-width:1px,color:#0B1324;
+   classDef gold fill:#ECFDF3,stroke:#15803D,stroke-width:1px,color:#0B1324;
+   classDef ai fill:#FDF2F8,stroke:#BE185D,stroke-width:1px,color:#0B1324;
+   classDef app fill:#F5F3FF,stroke:#6D28D9,stroke-width:1px,color:#0B1324;
+   classDef ops fill:#F9FAFB,stroke:#4B5563,stroke-width:1px,color:#0B1324;
+
+   A[Document Sources\nPDFs, invoices, contracts] --> B[Ingestion\nAuto Loader + Delta Bronze]
+   B --> C[AI Processing\nParse, classify, extract]
+   C --> D[Knowledge Layer\nVector Search + RAG Agent]
+   C --> E[Trust & Quality\nPII redaction, anomalies, DQ, dedup]
+   D --> F[Databricks App\nUpload, Explore, RAG Chat]
+   E --> F
+   G[Operations\nReview Queue, Slack alerts, Cost monitoring] --> F
+
+   class A source;
+   class B bronze;
+   class C silver;
+   class D ai;
+   class E gold;
+   class F app;
+   class G ops;
 ```
-                       ┌─────────────────────────────────────────────┐
-                       │            Unity Catalog Volume              │
-                       │   /Volumes/doc_intel/raw/incoming_docs       │
-                       └───────────────────┬───────────────────────────┘
-                                            │ Auto Loader (streaming)
-                                            ▼
-        ┌────────────────────────────────────────────────────────────┐
-        │  01_ingest_documents      → bronze.raw_documents (Delta)    │
-        │  02_parse_documents       → ai_parse_document()             │
-        │                              silver.parsed_documents        │
-        │  03_classify_documents    → ai_query() classifier           │
-        │                              silver.classified_documents    │
-        │  04_extract_structured    → ai_query() + JSON schema        │
-        │                              gold.extracted_fields          │
-        │  05_vector_search_index   → Databricks Vector Search        │
-        │  06_rag_agent             → Mosaic AI Agent Framework       │
-        │  07_cost_monitoring       → system.billing.usage            │
-        │  08_redact_pii            → gold.redacted_documents         │
-        │  09_summarize_documents   → gold.document_summaries         │
-        │  10_duplicate_detection   → gold.duplicate_documents        │
-        │  11_anomaly_detection     → gold.document_anomalies         │
-        │  12_data_quality_checks   → data_quality_results            │
-        └────────────────────────────────────────────────────────────┘
-                                            │
-                                            ▼
-                       ┌─────────────────────────────────────────────┐
-                       │   Databricks App (Streamlit) — app/app.py     │
-                       │   Upload · Explore · RAG Chat · Review Queue  │
-                       │   · Anomalies & Duplicates · Cost Monitor     │
-                       └─────────────────────────────────────────────┘
+
+### Detailed dataflow
+
+```mermaid
+flowchart TB
+   classDef source fill:#E8F4FD,stroke:#1D4ED8,stroke-width:1px,color:#0B1324;
+   classDef bronze fill:#FFF4E5,stroke:#C2410C,stroke-width:1px,color:#0B1324;
+   classDef silver fill:#F1F5F9,stroke:#334155,stroke-width:1px,color:#0B1324;
+   classDef gold fill:#ECFDF3,stroke:#15803D,stroke-width:1px,color:#0B1324;
+   classDef ai fill:#FDF2F8,stroke:#BE185D,stroke-width:1px,color:#0B1324;
+   classDef app fill:#F5F3FF,stroke:#6D28D9,stroke-width:1px,color:#0B1324;
+   classDef ops fill:#F9FAFB,stroke:#4B5563,stroke-width:1px,color:#0B1324;
+
+   A[Unity Catalog Volume\n/Volumes/doc_intel/pipeline/raw_docs]:::source
+   B[01_ingest_documents\nAuto Loader]:::bronze
+   C[(bronze.raw_documents)]:::bronze
+
+   D[02_parse_documents\nai_parse_document()]:::silver
+   E[(silver.parsed_documents)]:::silver
+   F[03_classify_documents\nai_query() classifier]:::silver
+   G[(silver.classified_documents)]:::silver
+
+   H[04_extract_structured_data\nai_query() + JSON schema]:::gold
+   I[(gold.extracted_fields)]:::gold
+   J[08_redact_pii]:::gold
+   K[(gold.redacted_documents)]:::gold
+   L[09_summarize_documents]:::gold
+   M[(gold.document_summaries)]:::gold
+   N[10_duplicate_detection]:::gold
+   O[(gold.duplicate_documents)]:::gold
+   P[11_anomaly_detection]:::gold
+   Q[(gold.document_anomalies)]:::gold
+   R[12_data_quality_checks]:::gold
+   S[(data_quality_results)]:::gold
+
+   T[05_create_vector_search_index]:::ai
+   U[(Databricks Vector Search\nDelta Sync Index)]:::ai
+   V[06_build_rag_agent\nMosaic AI Agent Framework]:::ai
+
+   W[Review Queue + Audit Log + Slack Alerts]:::ops
+   X[07_cost_monitoring\nsystem.billing.usage]:::ops
+
+   Y[Databricks App (Streamlit)\nUpload | Explore | RAG Chat\nReview Queue | Anomalies & Duplicates | Cost Monitor]:::app
+
+   A -->|streaming ingest| B --> C
+   C --> D --> E --> F --> G --> H --> I
+   E --> T --> U --> V
+
+   E --> J --> K
+   E --> L --> M
+   E --> N --> O
+   I --> N
+   I --> P --> Q
+   I --> R --> S
+
+   G --> W
+   K --> W
+   Q --> W
+   R --> W
+
+   I --> Y
+   K --> Y
+   M --> Y
+   O --> Y
+   Q --> Y
+   S --> Y
+   U --> Y
+   V --> Y
+   X --> Y
 ```
 
 ## Mapping from Snowflake Cortex AI → Databricks
