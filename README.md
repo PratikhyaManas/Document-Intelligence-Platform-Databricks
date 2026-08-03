@@ -32,60 +32,69 @@ Anomalies & Duplicates · Cost Monitor**.
 
 ```mermaid
 flowchart LR
-   A[Document Sources\nPDFs, invoices, contracts] --> B[Ingestion\nAuto Loader and Delta Bronze]
-   B --> C[AI Processing\nParse, classify, extract]
-   C --> D[Knowledge Layer\nVector Search and RAG Agent]
-   C --> E[Trust and Quality\nPII redaction, anomalies, data quality, dedup]
-   D --> F[Databricks App\nUpload, Explore, RAG Chat]
+   A[Document Sources PDFs invoices contracts] --> B[Ingestion Auto Loader Delta Bronze]
+   B --> C[AI Processing parse classify extract]
+   C --> D[Knowledge Layer Vector Search and RAG Agent]
+   C --> E[Trust and Quality PII anomalies DQ dedup]
+   D --> F[Databricks App Upload Explore RAG Chat]
    E --> F
-   G[Operations\nReview Queue, Slack alerts, Cost monitoring] --> F
+   G[Operations Review Queue Slack Alerts Cost Monitoring] --> F
 ```
 
 ### Detailed dataflow
 
 ```mermaid
 flowchart TB
-   A[Unity Catalog Volume\n/Volumes/doc_intel/pipeline/raw_docs]
-   B[01_ingest_documents\nAuto Loader]
-   C[(bronze.raw_documents)]
+   A[Unity Catalog Volume raw_docs]
+   B[01 ingest documents]
+   C[bronze raw_documents]
+   D[02 parse documents]
+   E[silver parsed_documents]
+   F[03 classify documents]
+   G[silver classified_documents]
+   H[04 extract structured data]
+   I[gold extracted_fields]
+   J[08 redact pii]
+   K[gold redacted_documents]
+   L[09 summarize documents]
+   M[gold document_summaries]
+   N[10 duplicate detection]
+   O[gold duplicate_documents]
+   P[11 anomaly detection]
+   Q[gold document_anomalies]
+   R[12 data quality checks]
+   S[data_quality_results]
+   T[05 create vector search index]
+   U[Databricks Vector Search Delta Sync Index]
+   V[06 build rag agent]
+   W[Review Queue Audit Log Slack Alerts]
+   X[07 cost monitoring system billing usage]
+   Y[Databricks App Streamlit]
 
-   D[02_parse_documents\nai_parse_document()]
-   E[(silver.parsed_documents)]
-   F[03_classify_documents\nai_query() classifier]
-   G[(silver.classified_documents)]
+   A --> B
+   B --> C
+   C --> D
+   D --> E
+   E --> F
+   F --> G
+   G --> H
+   H --> I
 
-   H[04_extract_structured_data\nai_query() and JSON schema]
-   I[(gold.extracted_fields)]
-   J[08_redact_pii]
-   K[(gold.redacted_documents)]
-   L[09_summarize_documents]
-   M[(gold.document_summaries)]
-   N[10_duplicate_detection]
-   O[(gold.duplicate_documents)]
-   P[11_anomaly_detection]
-   Q[(gold.document_anomalies)]
-   R[12_data_quality_checks]
-   S[(data_quality_results)]
+   E --> T
+   T --> U
+   U --> V
 
-   T[05_create_vector_search_index]
-   U[(Databricks Vector Search\nDelta Sync Index)]
-   V[06_build_rag_agent\nMosaic AI Agent Framework]
-
-   W[Review Queue, Audit Log, Slack Alerts]
-   X[07_cost_monitoring\nsystem.billing.usage]
-
-   Y[Databricks App (Streamlit)\nUpload, Explore, RAG Chat\nReview Queue, Anomalies and Duplicates, Cost Monitor]
-
-   A -->|streaming ingest| B --> C
-   C --> D --> E --> F --> G --> H --> I
-   E --> T --> U --> V
-
-   E --> J --> K
-   E --> L --> M
-   E --> N --> O
+   E --> J
+   J --> K
+   E --> L
+   L --> M
+   E --> N
+   N --> O
    I --> N
-   I --> P --> Q
-   I --> R --> S
+   I --> P
+   P --> Q
+   I --> R
+   R --> S
 
    G --> W
    K --> W
