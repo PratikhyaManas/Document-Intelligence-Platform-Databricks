@@ -10,7 +10,7 @@ Beyond the core parse → classify → extract → search/RAG pipeline, this
 build adds a second wave of production-oriented capabilities:
 
 | Feature | Where | What it does |
-|---|---|---|
+| --- | --- | --- |
 | 🔒 **PII detection & redaction** | `notebooks/08_redact_pii.py`, `src/doc_intelligence/redaction.py` | Regex + LLM pass over parsed text; writes a shareable redacted copy to `gold_redacted_documents`, auto-enqueues PII-positive docs for review, and Slack-alerts |
 | 📝 **Summarization** | `notebooks/09_summarize_documents.py` | Executive summary, key points, and sentiment per document via `ai_query()` → `gold_document_summaries`, surfaced in the Explore tab |
 | 🧬 **Duplicate detection** | `notebooks/10_duplicate_detection.py`, `src/doc_intelligence/dedup.py` | Exact-hash matching + Vector-Search-based near-duplicate detection → `gold_duplicate_documents` |
@@ -143,28 +143,28 @@ If Mermaid is unavailable, use this architecture summary:
 
 ## Mapping from Snowflake Cortex AI → Databricks
 
-| Snowflake Cortex AI              | Databricks equivalent                              |
-|-----------------------------------|-----------------------------------------------------|
-| Internal/External Stage           | Unity Catalog Volume                                 |
-| `AI_PARSE_DOCUMENT` (LAYOUT/OCR)  | `ai_parse_document()` SQL function                    |
-| Serverless Tasks / Streams        | Databricks Workflows + Auto Loader (streaming)        |
-| `AI_CLASSIFY`                     | `ai_query()` against a served LLM with a classify prompt |
-| Structured extraction functions   | `ai_query()` with a JSON-schema response format        |
-| `CORTEX_SEARCH` service           | Databricks Vector Search (Delta Sync Index)            |
-| Cortex Agents                     | Mosaic AI Agent Framework (`agents` SDK)               |
-| Streamlit-in-Snowflake dashboard  | Databricks Apps (Streamlit)                            |
-| Credit/cost dashboard             | `system.billing.usage` system table                    |
+| Snowflake Cortex AI | Databricks equivalent |
+| --- | --- |
+| Internal/External Stage | Unity Catalog Volume |
+| `AI_PARSE_DOCUMENT` (LAYOUT/OCR) | `ai_parse_document()` SQL function |
+| Serverless Tasks / Streams | Databricks Workflows + Auto Loader (streaming) |
+| `AI_CLASSIFY` | `ai_query()` against a served LLM with a classify prompt |
+| Structured extraction functions | `ai_query()` with a JSON-schema response format |
+| `CORTEX_SEARCH` service | Databricks Vector Search (Delta Sync Index) |
+| Cortex Agents | Mosaic AI Agent Framework (`agents` SDK) |
+| Streamlit-in-Snowflake dashboard | Databricks Apps (Streamlit) |
+| Credit/cost dashboard | `system.billing.usage` system table |
 
 ## Repo layout
 
-```
+```text
 setup/            SQL to create catalog, schema, volumes, Delta tables
-notebooks/         Numbered pipeline notebooks (run in order, or via the job)
-jobs/               Databricks Workflow (Job) definition, YAML
+notebooks/        Numbered pipeline notebooks (run in order, or via the job)
+jobs/             Databricks Workflow (Job) definition, YAML
 src/doc_intelligence/  Reusable Python helpers imported by the notebooks
-app/                Databricks App (Streamlit) — dashboard + RAG chat UI
-databricks.yml      Databricks Asset Bundle — deploys jobs + app in one shot
-requirements.txt    Local/dev dependencies
+app/              Databricks App (Streamlit) — dashboard + RAG chat UI
+databricks.yml    Databricks Asset Bundle — deploys jobs + app in one shot
+pyproject.toml    Local/dev dependencies and uv project config
 ```
 
 ## Prerequisites
@@ -179,39 +179,67 @@ requirements.txt    Local/dev dependencies
 
 ## Quickstart
 
-1. **Configure** — edit `databricks.yml` and set `catalog`/`schema` variables
-   (defaults: `doc_intel` / `pipeline`).
+### Local development commands
 
-2. **Deploy** with the Databricks Asset Bundle:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\local-dev.ps1 -Command sync
+powershell -ExecutionPolicy Bypass -File .\scripts\local-dev.ps1 -Command test
+powershell -ExecutionPolicy Bypass -File .\scripts\local-dev.ps1 -Command app
+```
+
+These wrappers call the uv-managed environment and keep the repo commands simple on Windows.
+
+1. Install the project dependencies with uv.
+
    ```bash
-   databricks bundle validate
-   databricks bundle deploy -t dev
+   uv sync
    ```
+
+   This creates the repo-local environment and keeps the package list in one
+   place via `pyproject.toml`.
+
+2. Configure `databricks.yml` and set `catalog`/`schema` variables (defaults: `doc_intel` / `pipeline`).
+
+3. Deploy with the Databricks Asset Bundle.
+
+   ```bash
+   uv run databricks bundle validate
+   uv run databricks bundle deploy -t dev
+   ```
+
    This creates the job `document_intelligence_pipeline` and deploys the
    Streamlit app, using the notebooks/app files in this repo as source.
 
-3. **Bootstrap the schema** (one-time, run `setup/00_create_catalog_schema.sql`
+4. Bootstrap the schema (one-time, run `setup/00_create_catalog_schema.sql`
    through `setup/02_create_tables.sql` in a SQL editor, or let the first job
    task do it — see `jobs/document_pipeline_job.yml`).
 
-4. **Drop documents** into the Volume:
+5. Drop documents into the Volume.
+
    ```bash
-   databricks fs cp ./my_invoices/ dbfs:/Volumes/doc_intel/pipeline/raw_docs/ --recursive
+   uv run databricks fs cp ./my_invoices/ dbfs:/Volumes/doc_intel/pipeline/raw_docs/ --recursive
    ```
 
-5. **Run the pipeline**:
+6. Run the pipeline.
+
    ```bash
-   databricks bundle run document_intelligence_pipeline -t dev
+   uv run databricks bundle run document_intelligence_pipeline -t dev
    ```
 
-6. **Open the app** (URL printed by `bundle deploy`) to upload documents,
+7. Run the app locally for dry validation.
+
+   ```bash
+   uv run streamlit run app/app.py --server.headless true --server.port 8501
+   ```
+
+8. Open the app (URL printed by `bundle deploy`) to upload documents,
    browse extracted fields, chat with the RAG agent over your document
    corpus, and view the cost dashboard.
 
 ## Notebook-by-notebook
 
 | # | Notebook | What it does |
-|---|-----------|----------------|
+| --- | --- | --- |
 | 01 | `01_ingest_documents.py` | Auto Loader stream: Volume → `bronze.raw_documents` (binary + metadata) |
 | 02 | `02_parse_documents.py` | Calls `ai_parse_document()` in LAYOUT mode → `silver.parsed_documents` (text, pages, tables as JSON) |
 | 03 | `03_classify_documents.py` | `ai_query()` zero-shot classifier (invoice / contract / resume / report / other) → `silver.classified_documents` |
@@ -226,8 +254,7 @@ requirements.txt    Local/dev dependencies
 | 12 | `12_data_quality_checks.py` | Field-level DQ checks → `data_quality_results`; enqueues low-confidence classifications for review |
 | 13 | `13_duplicate_detection_benchmark.py` | Synthetic benchmark comparing baseline vs optimized near-duplicate detection flow |
 
-`scripts/reprocess_documents.py` — CLI to clear downstream rows for
-specific `doc_id`s (or every failed parse) and re-trigger the job.
+`scripts/reprocess_documents.py` — CLI to clear downstream rows for specific `doc_id`s (or every failed parse) and re-trigger the job.
 
 ### Reprocessing examples
 
@@ -252,14 +279,13 @@ python scripts/reprocess_documents.py \
 ```
 
 Notes:
+
 - `--batch-size` controls DELETE chunking to avoid very large `IN (...)` clauses.
-- For `gold_duplicate_documents`, rows are removed when either `doc_id` or
-   `duplicate_of_doc_id` matches the requested document ids.
+- For `gold_duplicate_documents`, rows are removed when either `doc_id` or `duplicate_of_doc_id` matches the requested document ids.
 
 ### Run benchmark on demand
 
-The benchmark notebook is wired as a separate manual job so hourly/file-arrival
-pipeline runs are not impacted.
+The benchmark notebook is wired as a separate manual job so hourly/file-arrival pipeline runs are not impacted.
 
 ```bash
 databricks bundle run document_intelligence_benchmark -t dev

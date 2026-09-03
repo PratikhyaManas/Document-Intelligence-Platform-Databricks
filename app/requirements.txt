@@ -1,6 +1,0 @@
-streamlit>=1.38
-databricks-sdk>=0.30
-databricks-sql-connector>=3.4
-databricks-vectorsearch>=0.40
-pandas>=2.2
-plotly>=5.22

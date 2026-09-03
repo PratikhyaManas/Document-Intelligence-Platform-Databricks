@@ -19,6 +19,7 @@ import plotly.express as px
 import streamlit as st
 from databricks import sql as dbsql
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors.base import DatabricksError
 
 st.set_page_config(page_title="Document Intelligence Platform", layout="wide")
 
@@ -68,10 +69,8 @@ tab_upload, tab_explore, tab_chat, tab_review, tab_monitor, tab_cost = st.tabs(
 with tab_upload:
     st.subheader("Upload documents to the raw_docs Volume")
     st.write(
-        "Files land in `/Volumes/{}/{}/raw_docs` and are picked up by the "
-        "Auto Loader ingestion job automatically (file-arrival trigger).".format(
-            CATALOG, SCHEMA
-        )
+        f"Files land in `/Volumes/{CATALOG}/{SCHEMA}/raw_docs` and are picked up by the "
+        "Auto Loader ingestion job automatically (file-arrival trigger)."
     )
     uploaded_files = st.file_uploader(
         "Choose PDF / image / DOCX files",
@@ -156,8 +155,8 @@ with tab_explore:
             )
             if not detail.empty:
                 st.json(detail.iloc[0]["extracted_json"])
-    except Exception as e:
-        st.error(f"Couldn't load data — has the pipeline run yet? ({e})")
+    except (AttributeError, DatabricksError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        st.error(f"Couldn't load data — has the pipeline run yet? ({exc})")
 
 # ---------------------------------------------------------------------
 # Tab 3 · RAG Chat
@@ -177,22 +176,23 @@ with tab_chat:
         with st.chat_message("user"):
             st.write(question)
 
-        with st.chat_message("assistant"):
-            with st.spinner("Searching documents..."):
-                try:
-                    response = w.serving_endpoints.query(
-                        name=SERVING_AGENT_ENDPOINT,
-                        dataframe_records=[{"question": question}],
-                    )
-                    prediction = response.predictions[0]
-                    answer = prediction.get("answer", str(prediction))
-                    sources = prediction.get("sources", [])
-                    st.write(answer)
-                    if sources:
-                        st.caption("Sources: " + ", ".join(sorted(set(sources))))
-                    st.session_state.messages.append({"role": "assistant", "content": answer})
-                except Exception as e:
-                    st.error(f"Agent endpoint not reachable yet ({e}). Run notebook 06 to deploy it.")
+        with st.chat_message("assistant"), st.spinner("Searching documents..."):
+            try:
+                response = w.serving_endpoints.query(
+                    name=SERVING_AGENT_ENDPOINT,
+                    dataframe_records=[{"question": question}],
+                )
+                prediction = (response.predictions or [None])[0]
+                if prediction is None:
+                    raise ValueError("The agent returned no prediction payload.")
+                answer = prediction.get("answer", str(prediction))
+                sources = prediction.get("sources", [])
+                st.write(answer)
+                if sources:
+                    st.caption("Sources: " + ", ".join(sorted(set(sources))))
+                st.session_state.messages.append({"role": "assistant", "content": answer})
+            except (AttributeError, DatabricksError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                st.error(f"Agent endpoint not reachable yet ({exc}). Run notebook 06 to deploy it.")
 
 # ---------------------------------------------------------------------
 # Tab 4 · Review Queue (human-in-the-loop)
@@ -250,8 +250,8 @@ with tab_review:
                                 WHERE review_id = '{row['review_id']}'"""
                         )
                         st.rerun()
-    except Exception as e:
-        st.error(f"Couldn't load the review queue ({e})")
+    except (AttributeError, DatabricksError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        st.error(f"Couldn't load the review queue ({exc})")
 
 # ---------------------------------------------------------------------
 # Tab 5 · Anomalies & Duplicates
@@ -278,8 +278,8 @@ with tab_monitor:
                 use_container_width=True,
             )
             st.dataframe(anomalies, use_container_width=True)
-    except Exception as e:
-        st.warning(f"Couldn't load anomalies ({e})")
+    except (AttributeError, DatabricksError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        st.warning(f"Couldn't load anomalies ({exc})")
 
     st.subheader("Duplicate documents")
     try:
@@ -295,8 +295,8 @@ with tab_monitor:
             st.info("No duplicates detected yet.")
         else:
             st.dataframe(dupes, use_container_width=True)
-    except Exception as e:
-        st.warning(f"Couldn't load duplicates ({e})")
+    except (AttributeError, DatabricksError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        st.warning(f"Couldn't load duplicates ({exc})")
 
     st.subheader("Data quality check results")
     try:
@@ -310,15 +310,15 @@ with tab_monitor:
         )
         if not dq.empty:
             st.dataframe(dq, use_container_width=True)
-    except Exception as e:
-        st.warning(f"Couldn't load data quality results ({e})")
+    except (AttributeError, DatabricksError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        st.warning(f"Couldn't load data quality results ({exc})")
 
 # ---------------------------------------------------------------------
 # Tab 6 · Cost Monitor
 # ---------------------------------------------------------------------
 with tab_cost:
     st.subheader("Pipeline cost (last 30 days)")
-    cost_query = f"""
+    cost_query = """
         SELECT
           u.usage_date,
           u.sku_name,
@@ -345,8 +345,8 @@ with tab_cost:
                 use_container_width=True,
             )
             st.dataframe(cost_df, use_container_width=True)
-    except Exception as e:
+    except (AttributeError, DatabricksError, OSError, RuntimeError, TypeError, ValueError) as exc:
         st.warning(
             "Cost data requires `system.billing.usage` access (account admin must "
-            f"enable system schemas). ({e})"
+            f"enable system schemas). ({exc})"
         )
