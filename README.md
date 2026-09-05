@@ -1,8 +1,35 @@
-# Document Intelligence Platform on Databricks
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="Document Intelligence Platform on Databricks" width="100%" />
+</p>
 
+<p align="center">
+  <img alt="Databricks" src="https://img.shields.io/badge/Databricks-Asset%20Bundle-FF3621?logo=databricks&logoColor=white">
+  <img alt="Unity Catalog" src="https://img.shields.io/badge/Unity%20Catalog-enabled-1e293b">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white">
+  <img alt="uv" src="https://img.shields.io/badge/managed%20with-uv-DE5FE9">
+  <img alt="License" src="https://img.shields.io/badge/status-sample%2Freference-lightgrey">
+</p>
+
+<h1 align="center">Document Intelligence Platform on Databricks</h1>
+
+<p align="center">
 A Databricks-native re-implementation of a Snowflake-Cortex-style document
-intelligence pipeline: **ingest → parse → classify → extract → index → search
-/ RAG chat → dashboard**, built entirely with Databricks primitives.
+intelligence pipeline: <b>ingest → parse → classify → extract → index → search
+/ RAG chat → dashboard</b>, built entirely with Databricks primitives.
+</p>
+
+<a id="table-of-contents"></a>
+
+## 📚 Table of contents
+
+- [What's new — extended feature set](#whats-new--extended-feature-set)
+- [Architecture](#architecture)
+- [Mapping from Snowflake Cortex AI → Databricks](#mapping-from-snowflake-cortex-ai--databricks)
+- [Repo layout](#repo-layout)
+- [Prerequisites](#prerequisites)
+- [Quickstart](#quickstart)
+- [Notebook-by-notebook](#notebook-by-notebook)
+- [Extending](#extending)
 
 ## What's new — extended feature set
 
@@ -23,8 +50,8 @@ build adds a second wave of production-oriented capabilities:
 | 🔁 **Reprocessing CLI** | `scripts/reprocess_documents.py` | Clears downstream rows for specific `doc_id`s (or all failed parses) and optionally re-triggers the job |
 | ⚙️ **CI/CD** | `.github/workflows/ci.yml` | Runs unit tests + `databricks bundle validate` on PRs, `bundle deploy -t prod` on merge to `main` |
 
-The app now has six tabs: **Upload · Explore · RAG Chat · Review Queue ·
-Anomalies & Duplicates · Cost Monitor**.
+> 💡 **The Databricks App has six tabs:** Upload · Explore · RAG Chat ·
+> Review Queue · Anomalies & Duplicates · Cost Monitor.
 
 ## Architecture
 
@@ -42,6 +69,9 @@ flowchart LR
 ```
 
 ### Detailed dataflow
+
+<details>
+<summary>Click to expand the full notebook-level dataflow diagram</summary>
 
 ```mermaid
 flowchart TB
@@ -111,6 +141,8 @@ flowchart TB
    V --> Y
    X --> Y
 ```
+
+</details>
 
 ### Plain-text fallback
 
@@ -256,7 +288,8 @@ These wrappers call the uv-managed environment and keep the repo commands simple
 
 `scripts/reprocess_documents.py` — CLI to clear downstream rows for specific `doc_id`s (or every failed parse) and re-trigger the job.
 
-### Reprocessing examples
+<details>
+<summary><strong>Reprocessing examples</strong> (click to expand)</summary>
 
 ```bash
 # Inspect generated DELETE statements only
@@ -283,6 +316,8 @@ Notes:
 - `--batch-size` controls DELETE chunking to avoid very large `IN (...)` clauses.
 - For `gold_duplicate_documents`, rows are removed when either `doc_id` or `duplicate_of_doc_id` matches the requested document ids.
 
+</details>
+
 ### Run benchmark on demand
 
 The benchmark notebook is wired as a separate manual job so hourly/file-arrival pipeline runs are not impacted.
@@ -299,3 +334,9 @@ databricks bundle run document_intelligence_benchmark -t dev
   for governed access, same as Snowflake's role-based grants.
 - Point Auto Loader at cloud storage (S3/ADLS/GCS) directly instead of a
   Volume for a fully "documents stay in object storage" pattern.
+
+---
+
+<p align="center">
+  <a href="#table-of-contents">⬆ Back to top</a>
+</p>
